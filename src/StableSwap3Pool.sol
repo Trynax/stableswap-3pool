@@ -35,6 +35,8 @@ error StableSwap3Pool__InvalidToken(uint256 tokenId);
 error StableSwap3Pool__SwapAmountMustBeGreaterThanZero();
 error StableSwap3Pool__SlippageTooHigh();
 error StableSwap3Pool__InvariantDMustIncrease();
+error StableSwap3Pool__BurnAmountMustBeGreaterThanZero();
+error StableSwap3Pool__InsufficientBalance();
 
 contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     // State variables
@@ -163,6 +165,50 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         emit AddLiquidity(msg.sender, amounts, fees, newD, totalSupply + mintAmount);
 
         return mintAmount;
+    }
+
+    /**
+     * @notice Remove liquidity from the pool
+     * @param burnAmount Amount of LP tokens to burn
+     * @param minAmounts Minimum amounts of each token to receive
+     * @return amounts Amounts of each token received
+     */
+    function removeLiquidity(uint256 burnAmount, uint256[N_COINS] memory minAmounts)
+        external
+        nonReentrant
+        returns (uint256[N_COINS] memory amounts)
+    {
+        uint256 totalSupply = totalSupply();
+
+        if (burnAmount <= 0) {
+            revert StableSwap3Pool__BurnAmountMustBeGreaterThanZero();
+        }
+        if (burnAmount > balanceOf(msg.sender)) {
+            revert StableSwap3Pool__InsufficientBalance();
+        }
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            amounts[i] = balances[i] * burnAmount / totalSupply;
+            if (amounts[i] < minAmounts[i]) {
+                revert StableSwap3Pool__SlippageTooHigh();
+            }
+        }
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            if (amounts[i] > 0) {
+                balances[i] -= amounts[i];
+            }
+        }
+
+        _burn(msg.sender, burnAmount);
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            if (amounts[i] > 0) {
+                coins[i].transfer(msg.sender, amounts[i]);
+            }
+        }
+        emit RemoveLiquidity(msg.sender, amounts, totalSupply - burnAmount);
+        return amounts;
     }
 
     // Internal functions
