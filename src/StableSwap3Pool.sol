@@ -44,6 +44,8 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     uint256 private constant N_COINS = 3;
     uint256 private constant FEE_DENOMINATOR = 1e10;
     uint256 private constant PRECISION = 1e18;
+    uint256[N_COINS] private constant RATES = [1e18, 1e30, 1e30];
+
 
     uint256 public A; // Amplification coefficient
     uint256 public fee;
@@ -96,12 +98,12 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         }
 
         uint256[N_COINS] memory oldBalances = balances;
+        uint256[N_COINS] memory xp = _xp(oldBalances);
 
-        uint256 x = oldBalances[i] + dx;
-
+        uint256 x = xp[i] + dx * RATES[i] / PRECISION;
         uint256 y = _getY(i, j, x, oldBalances);
 
-        dy = oldBalances[j] - y;
+        dy = (xp[j] - y) * PRECISION / RATES[j];
 
         if (dy < minDy) {
             revert StableSwap3Pool__SlippageTooHigh();
@@ -211,6 +213,38 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         return amounts;
     }
 
+
+    /**
+     * @notice Remove liquidity from the pool in one token
+     * @param burnAmount Amount of LP tokens to burn
+     * @param i Index of token to receive
+     * @param minAmount Minimum amount of token i to receive
+     * @return dy Amount of token i received
+     */
+
+     function removeLiquidityOneToken(uint256 burnAmount, uint256 i, uint256 minAmount)
+        external
+        nonReentrant
+        returns (uint256 dy){
+
+    }
+
+    /**
+     * @notice Remove speicific amounts of liquidity from the pool
+     * @param amounts Amounts of each token to receive
+     * @param maxBurnAmount Maximum amount of LP tokens to burn
+     * @return burnAmount Amount of LP tokens burned
+     */
+
+     function removeLiquidityImbalance(uint256[N_COINS] memory amounts, uint256 maxBurnAmount)
+        external
+        nonReentrant
+        returns (uint256 burnAmount){
+
+        }
+
+
+
     // Internal functions
 
     /**
@@ -219,10 +253,12 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
      * @return D the invariant
      */
     function _getD(uint256[N_COINS] memory _balances) internal view returns (uint256 D) {
+
+        uint256[N_COINS] memory xp = _xp(_balances);
         uint256 sum = 0;
 
         for (uint256 i = 0; i < N_COINS; i++) {
-            sum += _balances[i];
+            sum += xp[i];
         }
 
         if (sum == 0) return 0;
@@ -233,7 +269,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         for (uint256 i = 0; i < 255; i++) {
             uint256 D_P = D;
             for (uint256 j = 0; j < N_COINS; j++) {
-                D_P = D_P * D / (_balances[j] * N_COINS);
+                D_P = D_P * D / (xp[j] * N_COINS);
             }
 
             uint256 D_prev = D;
@@ -272,6 +308,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             revert StableSwap3Pool__InvalidToken(j);
         }
 
+        uint256[N_COINS] memory xp = _xp(_balances);
         uint256 D = _getD(_balances);
         uint256 Ann = A * N_COINS;
         uint256 c = D;
@@ -280,11 +317,11 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         for (uint256 k = 0; k < N_COINS; k++) {
             uint256 _x = 0;
             if (k == i) {
-                _x = x;
+                _x = x; 
             } else if (k == j) {
                 continue;
             } else {
-                _x = _balances[k];
+                _x = xp[k];
             }
             S += _x;
             c = c * D / (_x * N_COINS);
@@ -305,5 +342,36 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             }
         }
         return y;
+    }
+
+
+
+    // Internal & private view & pure functions
+
+    function _xp (uint256[N_COINS] memory _balances) internal pure returns (uint256[N_COINS] memory results){
+        for (uint256 i = 0; i < N_COINS; i++) {
+            results[i] = _balances[i] * RATES[i] / PRECISION;
+        }
+        return results;
+    }
+
+
+
+
+    // External & public view & pure functions  
+
+    function getDy(uint256 i, uint256 j, uint256 dx) external view returns (uint256 dy) {
+        uint256[N_COINS] memory xp = _xp(balances);
+        uint256 x = xp[i] + dx * RATES[i] / PRECISION;
+        uint256 y = _getY(i, j, x, balances);
+        dy = (xp[j] - y - 1) * PRECISION / RATES[j];
+        return dy;
+    }
+
+    function getA() external view returns (uint256) {
+        return A;
+    }
+    function getFee() external view returns (uint256) {
+        return fee;
     }
 }
