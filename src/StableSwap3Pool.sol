@@ -48,25 +48,24 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
     uint256 public A; // Amplification coefficient
     uint256 public fee;
-    uint256 public admin_fee;
+    uint256 public adminFee;
 
     IERC20[N_COINS] public coins;
     uint256[N_COINS] public balances;
 
     // Events
-    event TokenSwap(
-        address indexed buyer, uint256 sold_id, uint256 tokens_sold, uint256 bought_id, uint256 tokens_bought
-    );
+    event TokenSwap(address indexed buyer, uint256 soldId, uint256 tokensSold, uint256 boughtId, uint256 tokensBought);
     event AddLiquidity(
         address indexed provider,
-        uint256[N_COINS] token_amounts,
+        uint256[N_COINS] tokenAmounts,
         uint256[N_COINS] fees,
         uint256 invariant,
-        uint256 token_supply
+        uint256 tokenSupply
     );
-    event RemoveLiquidity(address indexed provider, uint256[N_COINS] token_amounts, uint256 token_supply);
+    event RemoveLiquidity(address indexed provider, uint256[N_COINS] tokenAmounts, uint256 tokenSupply);
+    event RemoveLiquidityOne(address indexed provider, uint256 tokenAmount, uint256 coinId, uint256 tokenSupply);
 
-    constructor(IERC20[N_COINS] memory _coins, uint256 _A, uint256 _fee, uint256 _admin_fee)
+    constructor(IERC20[N_COINS] memory _coins, uint256 _A, uint256 _fee, uint256 _adminFee)
         ERC20("Curve.fi DAI/USDC/USDT", "3CRV")
         Ownable(msg.sender)
     {
@@ -81,7 +80,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         }
         A = _A;
         fee = _fee;
-        admin_fee = _admin_fee;
+        adminFee = _adminFee;
     }
 
     //External functions
@@ -254,6 +253,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         _burn(msg.sender, burnAmount);
         coins[i].transfer(msg.sender, dy);
 
+        emit RemoveLiquidityOne(msg.sender, dy, i, totalSupply - burnAmount);
         return dy;
     }
 
@@ -267,7 +267,43 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         external
         nonReentrant
         returns (uint256 burnAmount)
-    {}
+    {
+        uint256 totalSupply = totalSupply();
+        uint256[N_COINS] memory oldBalances = balances;
+        uint256[N_COINS] memory newBalances = oldBalances;
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            if (amounts[i] > oldBalances[i]) {
+                revert StableSwap3Pool__InsufficientBalance();
+            }
+            newBalances[i] = oldBalances[i] - amounts[i];
+        }
+
+        uint256 D0 = _getD(oldBalances);
+        uint256 D1 = _getD(newBalances);
+
+        burnAmount = (D0 - D1) * totalSupply / D0;
+        burnAmount = burnAmount + 1;
+
+        if (burnAmount > maxBurnAmount) {
+            revert StableSwap3Pool__SlippageTooHigh();
+        }
+
+        if (burnAmount > balanceOf(msg.sender)) {
+            revert StableSwap3Pool__InsufficientBalance();
+        }
+
+        balances = newBalances;
+        _burn(msg.sender, burnAmount);
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            if (amounts[i] > 0) {
+                coins[i].transfer(msg.sender, amounts[i]);
+            }
+        }
+
+        return burnAmount;
+    }
 
     // Internal functions
 
