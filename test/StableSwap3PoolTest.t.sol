@@ -20,7 +20,7 @@ contract StableSwap3PoolTest is Test {
 
     uint256 public A = 200;
     uint256 public fee = 4e6;
-    uint256 public adminFee = 5e10;
+    uint256 public adminFee = 5e9;
 
     uint256 public daiAmount = 1000e18;
     uint256 public usdcAmount = 1000e6;
@@ -432,5 +432,94 @@ contract StableSwap3PoolTest is Test {
         vm.expectRevert();
         vm.prank(alice);
         pool.stopRampA();
+    }
+
+    function testGetVirtualPrice() public {
+        assertEq(pool.getVirtualPrice(), 1e18);
+
+        uint256[3] memory amounts = [daiAmount, usdcAmount, usdtAmount];
+        vm.prank(alice);
+        pool.addLiquidity(amounts, 0);
+
+        uint256 vp = pool.getVirtualPrice();
+        assertApproxEqAbs(vp, 1e18, 0.01e18);
+
+        vm.prank(bob);
+        pool.swap(0, 1, 100e18, 0);
+
+        uint256 vpAfterSwap = pool.getVirtualPrice();
+        assertGt(vpAfterSwap, vp);
+        console.log("Virtual Price After Swap:", vpAfterSwap);
+    }
+
+    function testCalcTokenAmount() public {
+        uint256[3] memory amounts = [daiAmount, usdcAmount, usdtAmount];
+        vm.prank(alice);
+        uint256 actualLp = pool.addLiquidity(amounts, 0);
+
+        uint256 calculatedLp = pool.calcTokenAmount(amounts, true);
+        assertApproxEqRel(actualLp, calculatedLp, 0.001e18);
+
+        uint256[3] memory withdrawAmounts = [uint256(500e18), uint256(500e6), uint256(500e6)];
+        uint256 calculatedBurn = pool.calcTokenAmount(withdrawAmounts, false);
+
+        assertApproxEqRel(calculatedBurn, actualLp / 2, 0.05e18);
+
+        vm.prank(alice);
+        uint256 lpTokens = pool.addLiquidity(amounts, 0);
+
+        uint256 burnAmount = lpTokens / 10;
+
+        uint256 expectedUsdc = pool.calcWithdrawOneCoin(burnAmount, 1);
+
+        vm.prank(alice);
+        uint256 actualUsdc = pool.removeLiquidityOneToken(burnAmount, 1, 0);
+
+        assertApproxEqRel(expectedUsdc, actualUsdc, 0.001e18);
+    }
+
+    function testGetPoolState() public {
+        uint256[3] memory amounts = [daiAmount, usdcAmount, usdtAmount];
+        vm.prank(alice);
+        pool.addLiquidity(amounts, 0);
+
+        vm.prank(bob);
+        pool.swap(0, 1, 100e18, 0);
+        (
+            uint256[3] memory poolBalances,
+            uint256[3] memory adminFees,
+            uint256 currentA,
+            uint256 currentFee,
+            uint256 currentAdminFee,
+            uint256 virtualPrice,
+            uint256 totalSupply
+        ) = pool.getPoolState();
+
+        assertEq(currentA, A);
+        assertEq(currentFee, fee);
+        assertEq(currentAdminFee, adminFee);
+        assertGt(virtualPrice, 0);
+        assertGt(totalSupply, 0);
+        assertGt(adminFees[1], 0);
+    }
+
+    function testCalculateInvariant() public {
+        uint256[3] memory amounts = [daiAmount, usdcAmount, usdtAmount];
+        vm.prank(alice);
+        pool.addLiquidity(amounts, 0);
+
+        uint256 D = pool.calculateInvariant(amounts);
+        assertGt(D, 0);
+
+        assertApproxEqRel(D, 3000e18, 0.01e18);
+    }
+
+    function testCalcWithdrawOneCoinInvalidToken() public {
+        uint256[3] memory amounts = [daiAmount, usdcAmount, usdtAmount];
+        vm.prank(alice);
+        uint256 lpTokens = pool.addLiquidity(amounts, 0);
+
+        vm.expectRevert();
+        pool.calcWithdrawOneCoin(lpTokens / 10, 3);
     }
 }

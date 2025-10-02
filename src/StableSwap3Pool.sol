@@ -81,7 +81,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     event RampA(uint256 initialA, uint256 futureA, uint256 initialATime, uint256 futureATime);
     event StopRampA(uint256 currentA, uint256 time);
 
-    constructor(IERC20[N_COINS] memory _coins, uint256 _A, uint256 _fee, uint256 _adminFee)
+    constructor(IERC20[N_COINS] memory _coins, uint256 _Acoeff, uint256 _fee, uint256 _adminFee)
         ERC20("Curve.fi DAI/USDC/USDT", "3CRV")
         Ownable(msg.sender)
     {
@@ -94,9 +94,9 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             }
             coins[i] = _coins[i];
         }
-        A = _A;
-        futureA = _A;
-        initialA = _A;
+        A = _Acoeff;
+        futureA = _Acoeff;
+        initialA = _Acoeff;
         fee = _fee;
         adminFee = _adminFee;
         initialATime = block.timestamp;
@@ -637,5 +637,115 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
     function getRampingInfo() external view returns (uint256, uint256, uint256, uint256) {
         return (initialA, futureA, initialATime, futureATime);
+    }
+
+    /**
+     * @notice Calculate the current virtual price of the pool
+     * @dev Virtual price always increases (except during depeg events)
+     * @return Virtual price scaled by 1e18
+     */
+    function getVirtualPrice() external view returns (uint256) {
+        uint256 D = _getD(balances);
+        uint256 totalSupply = totalSupply();
+        if (totalSupply == 0) return PRECISION;
+        return D * PRECISION / totalSupply;
+    }
+
+    /**
+     * @notice Calculate LP tokens received/burned for given token amounts
+     * @param amounts Token amounts to add/remove
+     * @param isDeposit True for deposit, false for withdrawal
+     * @return LP token amount (without fees)
+     */
+    function calcTokenAmount(uint256[N_COINS] memory amounts, bool isDeposit) external view returns (uint256) {
+        uint256[N_COINS] memory _balances = balances;
+        uint256 D0 = _getD(_balances);
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            if (isDeposit) {
+                _balances[i] += amounts[i];
+            } else {
+                _balances[i] -= amounts[i];
+            }
+        }
+
+        uint256 D1 = _getD(_balances);
+        uint256 totalSupply = totalSupply();
+
+        if (totalSupply == 0) {
+            return D1; // First deposit
+        }
+
+        uint256 diff = isDeposit ? D1 - D0 : D0 - D1;
+        return diff * totalSupply / D0;
+    }
+
+    /**
+     * @notice Calculate tokens received when withdrawing one token type
+     * @param burnAmount LP tokens to burn
+     * @param i Index of token to receive
+     * @return Token amount received (after fees)
+     */
+    function calcWithdrawOneCoin(uint256 burnAmount, uint256 i) external view returns (uint256) {
+        if (i >= N_COINS) {
+            revert StableSwap3Pool__InvalidToken(i);
+        }
+
+        uint256 totalSupply = totalSupply();
+        if (totalSupply == 0) return 0;
+
+        uint256[N_COINS] memory xp = _xp(balances);
+        uint256 D0 = _getD(balances);
+        uint256 D1 = D0 - (burnAmount * D0 / totalSupply);
+
+        uint256 newY = _getYD(i, D1, xp);
+        uint256 dy0 = (xp[i] - newY) * PRECISION / RATES[i];
+
+        uint256 _fee = fee * N_COINS / (4 * (N_COINS - 1));
+
+        uint256 idealWithdrawal = balances[i] * burnAmount / totalSupply;
+
+        uint256 difference = dy0 > idealWithdrawal ? dy0 - idealWithdrawal : idealWithdrawal - dy0;
+        uint256 feeAmount = _fee * difference / FEE_DENOMINATOR;
+
+        return dy0 - feeAmount;
+    }
+
+    /**
+     * @notice Get detailed information about current balances and state
+     */
+    function getPoolState()
+        external
+        view
+        returns (
+            uint256[N_COINS] memory poolBalances,
+            uint256[N_COINS] memory adminFees,
+            uint256 currentA,
+            uint256 currentFee,
+            uint256 currentAdminFee,
+            uint256 virtualPrice,
+            uint256 totalPoolTokenSupply
+        )
+    {
+        poolBalances = balances;
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            adminFees[i] = this.adminBalances(i);
+        }
+
+        currentA = _A();
+        currentFee = fee;
+        currentAdminFee = adminFee;
+        virtualPrice = this.getVirtualPrice();
+        totalPoolTokenSupply = totalSupply();
+    }
+
+    /**
+     * @notice Calculate the invariant D for external use
+     * @param _balances Token balances to calculate D for
+     * @return Invariant D
+     */
+    function calculateInvariant(uint256[N_COINS] memory _balances) external view returns (uint256) {
+        return _getD(_balances);
     }
 }
