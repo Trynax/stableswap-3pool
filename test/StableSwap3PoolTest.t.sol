@@ -345,4 +345,92 @@ contract StableSwap3PoolTest is Test {
 
         assertGt(adminUsdc, 0);
     }
+
+    function testARamping() public {
+        uint256 initialAValue = pool.getA();
+        uint256 targetA = initialAValue * 2;
+        uint256 rampDuration = 7 days;
+        vm.prank(owner);
+        pool.rampA(targetA, block.timestamp + rampDuration);
+        (uint256 _initialA, uint256 _futureA, uint256 _initialATime, uint256 _futureATime) = pool.getRampingInfo();
+        assertEq(_initialA, initialAValue);
+        assertEq(_futureA, targetA);
+        assertEq(_initialATime, block.timestamp);
+        assertEq(_futureATime, block.timestamp + rampDuration);
+        assertEq(pool.getA(), initialAValue);
+
+        vm.warp(block.timestamp + rampDuration / 2);
+        uint256 halfwayA = pool.getA();
+        uint256 expectedHalfwayA = (initialAValue + targetA) / 2;
+        assertApproxEqAbs(halfwayA, expectedHalfwayA, 2);
+        vm.warp(block.timestamp + rampDuration / 2);
+        assertEq(pool.getA(), targetA);
+
+        vm.warp(block.timestamp + 1 days);
+        assertEq(pool.getA(), targetA);
+    }
+
+    function testStopRampA() public {
+        uint256 initialAValue = pool.getA();
+        uint256 targetA = initialAValue * 2;
+        uint256 rampDuration = 7 days;
+
+        vm.prank(owner);
+        pool.rampA(targetA, block.timestamp + rampDuration);
+
+        vm.warp(block.timestamp + rampDuration / 2);
+        uint256 currentA = pool.getA();
+
+        vm.prank(owner);
+        pool.stopRampA();
+
+        assertEq(pool.getA(), currentA);
+
+        vm.warp(block.timestamp + 1 days);
+        assertEq(pool.getA(), currentA);
+    }
+
+    function testRampingRestrictions() public {
+        uint256 currentA = pool.getA();
+
+        vm.prank(owner);
+        pool.rampA(currentA * 2, block.timestamp + 2 days);
+
+        vm.expectRevert();
+        vm.prank(owner);
+        pool.rampA(currentA * 3, block.timestamp + 2 days);
+        vm.warp(block.timestamp + 2 days);
+
+        uint256 newA = pool.getA();
+        console.log("New A:", newA);
+
+        vm.expectRevert();
+        vm.prank(owner);
+        pool.rampA(newA * 2, block.timestamp + 1 hours);
+
+        vm.expectRevert();
+        vm.prank(owner);
+        pool.rampA(newA * 11, block.timestamp + 2 days);
+
+        vm.expectRevert();
+        vm.prank(owner);
+        pool.rampA(0, block.timestamp + 2 days);
+
+        vm.expectRevert();
+        vm.prank(owner);
+        pool.rampA(1e6 + 1, block.timestamp + 2 days);
+
+        vm.prank(owner);
+        pool.rampA(newA * 10, block.timestamp + 2 days);
+    }
+
+    function testOnlyOwnerCanRampA() public {
+        vm.expectRevert();
+        vm.prank(alice);
+        pool.rampA(240, block.timestamp + 2 days);
+
+        vm.expectRevert();
+        vm.prank(alice);
+        pool.stopRampA();
+    }
 }

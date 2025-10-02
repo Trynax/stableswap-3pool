@@ -38,21 +38,33 @@ error StableSwap3Pool__SlippageTooHigh();
 error StableSwap3Pool__InvariantDMustIncrease();
 error StableSwap3Pool__BurnAmountMustBeGreaterThanZero();
 error StableSwap3Pool__InsufficientBalance();
+error StableSwap3Pool__RampingTooSoon();
+error StableSwap3Pool__RampinngParameterIsOutOfRange();
+error StableSwap3Pool__AChangeTooBig();
 
 contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     // State variables
+    uint256 private A; // Amplification coefficient
+    uint256 private futureA;
+    uint256 private futureATime;
+    uint256 private initialA;
+    uint256 private initialATime;
+
+    // Fees
+    uint256 private fee;
+    uint256 private adminFee;
+
     // Constants
     uint256 private constant N_COINS = 3;
     uint256 private constant FEE_DENOMINATOR = 1e10;
     uint256 private constant PRECISION = 1e18;
     uint256[N_COINS] private RATES;
+    uint256 private constant MAX_A = 1e6;
+    uint256 private constant MAX_A_CHANGE = 10;
+    uint256 private constant MIN_RAMP_TIME = 1 days;
 
-    uint256 public A; // Amplification coefficient
-    uint256 public fee;
-    uint256 public adminFee;
-
-    IERC20[N_COINS] public coins;
-    uint256[N_COINS] public balances;
+    IERC20[N_COINS] private coins;
+    uint256[N_COINS] private balances;
 
     // Events
     event TokenSwap(address indexed buyer, uint256 soldId, uint256 tokensSold, uint256 boughtId, uint256 tokensBought);
@@ -66,6 +78,8 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     event RemoveLiquidity(address indexed provider, uint256[N_COINS] tokenAmounts, uint256 tokenSupply);
     event RemoveLiquidityOne(address indexed provider, uint256 tokenAmount, uint256 coinId, uint256 tokenSupply);
     event RemoveLiquidityImbalance(address indexed provider, uint256[N_COINS] tokenAmounts, uint256 burnAmount);
+    event RampA(uint256 initialA, uint256 futureA, uint256 initialATime, uint256 futureATime);
+    event StopRampA(uint256 currentA, uint256 time);
 
     constructor(IERC20[N_COINS] memory _coins, uint256 _A, uint256 _fee, uint256 _adminFee)
         ERC20("Curve.fi DAI/USDC/USDT", "3CRV")
@@ -81,8 +95,12 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             coins[i] = _coins[i];
         }
         A = _A;
+        futureA = _A;
+        initialA = _A;
         fee = _fee;
         adminFee = _adminFee;
+        initialATime = block.timestamp;
+        futureATime = block.timestamp;
     }
 
     //External functions
@@ -381,6 +399,45 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         }
     }
 
+    function rampA(uint256 _futureA, uint256 _futureATime) external onlyOwner {
+        if (futureATime != initialATime && initialATime + MIN_RAMP_TIME > block.timestamp) {
+            revert StableSwap3Pool__RampingTooSoon();
+        }
+        if (_futureATime < block.timestamp + MIN_RAMP_TIME) {
+            revert StableSwap3Pool__RampingTooSoon();
+        }
+
+        if (_futureA <= 0 || _futureA > MAX_A) {
+            revert StableSwap3Pool__RampinngParameterIsOutOfRange();
+        }
+
+        uint256 _initialA = _A();
+
+        bool validIncrease = (_futureA >= _initialA && _futureA <= _initialA * MAX_A_CHANGE);
+        bool validDecrease = (_futureA < _initialA && _futureA * MAX_A_CHANGE >= _initialA);
+
+        if (!validIncrease && !validDecrease) {
+            revert StableSwap3Pool__AChangeTooBig();
+        }
+
+        initialA = _initialA;
+        futureA = _futureA;
+        initialATime = block.timestamp;
+        futureATime = _futureATime;
+
+        emit RampA(_initialA, _futureA, block.timestamp, _futureATime);
+    }
+
+    function stopRampA() external onlyOwner {
+        uint256 currentA = _A();
+        initialA = currentA;
+        futureA = initialA;
+        initialATime = block.timestamp;
+        futureATime = block.timestamp;
+
+        emit StopRampA(currentA, block.timestamp);
+    }
+
     // Internal functions
 
     /**
@@ -399,7 +456,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         if (sum == 0) return 0;
 
         D = sum;
-        uint256 Ann = A * N_COINS;
+        uint256 Ann = _A() * N_COINS;
 
         for (uint256 i = 0; i < 255; i++) {
             uint256 D_P = D;
@@ -445,7 +502,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         uint256[N_COINS] memory xp = _xp(_balances);
         uint256 D = _getD(_balances);
-        uint256 Ann = A * N_COINS;
+        uint256 Ann = _A() * N_COINS;
         uint256 c = D;
         uint256 S = 0;
 
@@ -491,7 +548,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             revert StableSwap3Pool__InvalidToken(i);
         }
 
-        uint256 Ann = A * N_COINS;
+        uint256 Ann = _A() * N_COINS;
         uint256 c = D;
         uint256 S = 0;
 
@@ -526,6 +583,22 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         return results;
     }
 
+    function _A() internal view returns (uint256) {
+        uint256 t1 = futureATime;
+        uint256 A1 = futureA;
+
+        if (block.timestamp < t1) {
+            uint256 t0 = initialATime;
+            uint256 A0 = initialA;
+            if (A1 > A0) {
+                return A0 + (A1 - A0) * (block.timestamp - t0) / (t1 - t0);
+            } else {
+                return A0 - (A0 - A1) * (block.timestamp - t0) / (t1 - t0);
+            }
+        } else {
+            return A1;
+        }
+    }
     // External & public view & pure functions
 
     function getDy(uint256 i, uint256 j, uint256 dx) external view returns (uint256 dy) {
@@ -543,7 +616,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     }
 
     function getA() external view returns (uint256) {
-        return A;
+        return _A();
     }
 
     function getFee() external view returns (uint256) {
@@ -560,5 +633,9 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
     function getBalances() external view returns (uint256, uint256, uint256) {
         return (balances[0], balances[1], balances[2]);
+    }
+
+    function getRampingInfo() external view returns (uint256, uint256, uint256, uint256) {
+        return (initialA, futureA, initialATime, futureATime);
     }
 }
