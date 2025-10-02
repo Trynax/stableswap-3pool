@@ -28,6 +28,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {console} from "forge-std/console.sol";
 
 error StableSwap3Pool__InvalidAddress();
 error StableSwap3Pool__CantSwapSameToken();
@@ -155,7 +156,6 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         if (totalSupply > 0) {
             uint256 _fee = fee * N_COINS / (4 * (N_COINS - 1)); //
-
             for (uint256 i = 0; i < N_COINS; i++) {
                 uint256 idealBalance = newD * oldBalances[i] / initialD;
                 uint256 difference = 0;
@@ -290,7 +290,6 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         if (dy < minAmount) {
             revert StableSwap3Pool__SlippageTooHigh();
         }
-
         balances[i] -= (dy + adminFeeAmount);
         _burn(msg.sender, burnAmount);
         coins[i].transfer(msg.sender, dy);
@@ -312,8 +311,9 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     {
         uint256 totalSupply = totalSupply();
         uint256[N_COINS] memory oldBalances = balances;
-        uint256[N_COINS] memory newBalances = oldBalances;
-        uint256[N_COINS] memory fees;
+        uint256[N_COINS] memory newBalances;
+        uint256 _fee = fee * N_COINS / (4 * (N_COINS - 1));
+        uint256 _adminFee = adminFee;
 
         for (uint256 i = 0; i < N_COINS; i++) {
             if (amounts[i] > oldBalances[i]) {
@@ -325,26 +325,28 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256 D0 = _getD(oldBalances);
         uint256 D1 = _getD(newBalances);
 
-        uint256 _fee = fee * N_COINS / (4 * (N_COINS - 1));
+        uint256[N_COINS] memory fees;
 
         for (uint256 i = 0; i < N_COINS; i++) {
-            uint256 idealBalance = oldBalances[i] * D1 / D0;
+            uint256 idealBalance = D1 * oldBalances[i] / D0;
 
             uint256 difference =
                 idealBalance > newBalances[i] ? idealBalance - newBalances[i] : newBalances[i] - idealBalance;
 
             fees[i] = _fee * difference / FEE_DENOMINATOR;
-
-            uint256 adminFeeAmount = fees[i] * adminFee / FEE_DENOMINATOR;
+            uint256 adminFeeAmount = fees[i] * _adminFee / FEE_DENOMINATOR;
 
             balances[i] = newBalances[i] - adminFeeAmount;
             newBalances[i] -= fees[i];
         }
 
-        // Recalculate D after fees
         uint256 D2 = _getD(newBalances);
 
         burnAmount = (D0 - D2) * totalSupply / D0;
+
+        if (burnAmount <= 0) {
+            revert StableSwap3Pool__BurnAmountMustBeGreaterThanZero();
+        }
         burnAmount = burnAmount + 1;
         if (burnAmount > maxBurnAmount) {
             revert StableSwap3Pool__SlippageTooHigh();
@@ -358,8 +360,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         for (uint256 i = 0; i < N_COINS; i++) {
             if (amounts[i] > 0) {
-                uint256 userAmount = amounts[i] - fees[i];
-                coins[i].transfer(msg.sender, userAmount);
+                coins[i].transfer(msg.sender, amounts[i]);
             }
         }
 
@@ -528,6 +529,9 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     // External & public view & pure functions
 
     function getDy(uint256 i, uint256 j, uint256 dx) external view returns (uint256 dy) {
+        if (dx <= 0) {
+            revert StableSwap3Pool__SwapAmountMustBeGreaterThanZero();
+        }
         uint256[N_COINS] memory xp = _xp(balances);
         uint256 x = xp[i] + dx * RATES[i] / PRECISION;
         uint256 y = _getY(i, j, x, balances);
@@ -552,5 +556,9 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
     function adminBalances(uint256 i) external view returns (uint256) {
         return coins[i].balanceOf(address(this)) - balances[i];
+    }
+
+    function getBalances() external view returns (uint256, uint256, uint256) {
+        return (balances[0], balances[1], balances[2]);
     }
 }
