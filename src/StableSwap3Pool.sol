@@ -48,29 +48,29 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     using SafeTransferLib for address;
     using FixedPointMathLib for uint256;
 
-    // State variables (ultra-optimized packing)
+    // State variables 
     // Slot 0: Pack all A parameters together
     uint32 private A;         // 4 bytes 
     uint32 private futureA;   // 4 bytes  
     uint32 private initialA;  // 4 bytes
-    uint160 private _reservedA; // 20 bytes for future use
+    uint160 private _reservedA; // 20 bytes 
     
     // Slot 1: Pack time variables together 
-    uint40 private initialATime; // 5 bytes (good until year 36,812)
+    uint40 private initialATime; // 5 bytes 
     uint40 private futureATime;  // 5 bytes
-    uint176 private _reservedTime; // 22 bytes for future use
+    uint176 private _reservedTime; // 22 bytes
     
     // Slot 2: Pack fee variables together 
-    uint32 private fee;        // 4 bytes (max ~4e9)
+    uint32 private fee;        // 4 bytes 
     uint32 private adminFee;   // 4 bytes
-    uint192 private _reservedFee; // 24 bytes for future use
+    uint192 private _reservedFee; // 24 bytes
 
-    // Constants (optimized types to reduce bytecode)
+    // Constants 
     uint8 private constant N_COINS = 3;
     uint64 private constant FEE_DENOMINATOR = 1e10;
     uint64 private constant PRECISION = 1e18;
     
-    // RATES - use uint128 to fit 1e30 values (still saves vs uint256)
+    // RATES 
     uint128[N_COINS] private RATES;
     
     uint32 private constant MAX_A = 1e6;
@@ -174,7 +174,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256[N_COINS] memory newBalances;
         uint256[N_COINS] memory fees;
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             newBalances[i] = oldBalances[i] + amounts[i];
         }
         uint256 newD = _getD(newBalances);
@@ -188,7 +188,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         if (totalSupply > 0) {
             uint256 _fee = uint256(fee).mulDiv(N_COINS, 4 * (N_COINS - 1)); //
-            for (uint8 i = 0; i < N_COINS; i++) {
+            for (uint8 i = 0; i < N_COINS; ++i) {
                 uint256 idealBalance = newD.mulDiv(oldBalances[i], initialD);
                 uint256 difference = 0;
 
@@ -221,7 +221,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             revert StableSwap3Pool__SlippageTooHigh();
         }
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             if (amounts[i] > 0) {
                 coins[i].transferFrom(msg.sender, address(this), amounts[i]);
             }
@@ -253,14 +253,14 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
             revert StableSwap3Pool__InsufficientBalance();
         }
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             amounts[i] = balances[i].mulDiv(burnAmount, totalSupply);
             if (amounts[i] < minAmounts[i]) {
                 revert StableSwap3Pool__SlippageTooHigh();
             }
         }
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             if (amounts[i] > 0) {
                 balances[i] -= amounts[i];
             }
@@ -268,7 +268,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         _burn(msg.sender, burnAmount);
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             if (amounts[i] > 0) {
                 coins[i].transfer(msg.sender, amounts[i]);
             }
@@ -347,7 +347,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256 _fee = uint256(fee).mulDiv(N_COINS, 4 * (N_COINS - 1));
         uint256 _adminFee = uint256(adminFee);
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             if (amounts[i] > oldBalances[i]) {
                 revert StableSwap3Pool__InsufficientBalance();
             }
@@ -359,7 +359,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         uint256[N_COINS] memory fees;
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             uint256 idealBalance = D1.mulDiv(oldBalances[i], D0);
 
             uint256 difference =
@@ -390,7 +390,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
 
         _burn(msg.sender, burnAmount);
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             if (amounts[i] > 0) {
                 coins[i].transfer(msg.sender, amounts[i]);
             }
@@ -405,7 +405,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
      * @param recipient address to receive the admin fees
      */
     function withdrawAdminFee(address recipient) external onlyOwner {
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             uint256 adminBalance = coins[i].balanceOf(address(this)) - balances[i];
             if (adminBalance > 0) {
                 coins[i].transfer(recipient, adminBalance);
@@ -467,7 +467,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256[N_COINS] memory xp = _xp(_balances);
         uint256 sum = 0;
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             sum += xp[i];
         }
 
@@ -476,7 +476,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         D = sum;
         uint256 Ann = _A() * N_COINS;
 
-        for (uint8 i = 0; i < 255; i++) {
+        for (uint8 i = 0; i < 255; ++i) {
             uint256 D_P = D;
             for (uint8 j = 0; j < N_COINS; j++) {
                 D_P = D_P.mulDiv(D, xp[j] * N_COINS);
@@ -542,7 +542,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256 prevY = 0;
         y = D;
 
-        for (uint8 _i = 0; _i < 255; _i++) {
+        for (uint8 _i = 0; _i < 255; ++_i) {
             prevY = y;
             y = (y * y + c) / (2 * y + b - D);
             if (y > prevY) {
@@ -582,7 +582,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256 prevY = 0;
         y = D;
 
-        for (uint8 _i = 0; _i < 255; _i++) {
+        for (uint8 _i = 0; _i < 255; ++_i) {
             prevY = y;
             y = (y * y + c) / (2 * y + b - D);
             if (y > prevY) {
@@ -595,7 +595,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     }
 
     function _xp(uint256[N_COINS] memory _balances) internal view returns (uint256[N_COINS] memory results) {
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             results[i] = _balances[i].mulDiv(RATES[i], PRECISION);
         }
         return results;
@@ -679,7 +679,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
         uint256[N_COINS] memory _balances = balances;
         uint256 D0 = _getD(_balances);
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             if (isDeposit) {
                 _balances[i] += amounts[i];
             } else {
@@ -747,7 +747,7 @@ contract StableSwap3Pool is ERC20, ReentrancyGuard, Ownable {
     {
         poolBalances = balances;
 
-        for (uint8 i = 0; i < N_COINS; i++) {
+        for (uint8 i = 0; i < N_COINS; ++i) {
             adminFees[i] = this.adminBalances(i);
         }
 
