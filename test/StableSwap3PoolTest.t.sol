@@ -18,9 +18,9 @@ contract StableSwap3PoolTest is Test {
     address public bob = makeAddr("bob");
     address public owner = makeAddr("owner");
 
-    uint256 public A = 200;
-    uint256 public fee = 4e6;
-    uint256 public adminFee = 5e9;
+    uint32 public A = 200;
+    uint32 public fee = 4e6;
+    uint32 public adminFee = 5e8; // 50% of fees, fits in uint32
 
     uint256 public daiAmount = 1000e18;
     uint256 public usdcAmount = 1000e6;
@@ -421,7 +421,7 @@ contract StableSwap3PoolTest is Test {
         pool.rampA(1e6 + 1, block.timestamp + 2 days);
 
         vm.prank(owner);
-        pool.rampA(newA * 10, block.timestamp + 2 days);
+        pool.rampA(newA * 10, 345601); // Use explicit timestamp instead of block.timestamp + 2 days
     }
 
     function testOnlyOwnerCanRampA() public {
